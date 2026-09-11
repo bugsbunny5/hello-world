@@ -1,0 +1,236 @@
+---
+title: "Module3_NYD_Shooting"
+author: "STUDENT XYZ"
+date: "2026-08-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Importing Data
++ The data is from the New York Police Department (NYPD)
+    + The data being imported is accessed initially from Data.gov
+    + The data being sought is: ARCHIVED_NYPD Shooting Incident Data (Historic)
+    + A call is made out to the website to read the csv file of data in
+
++ Notes about the data from the website:
+    + This NYPD Shooting Incident dataset was replaced with three related datasets – for shootings, shooting victims, and shooting offenders. 
+    + The new structure should be clearer and easier to use, especially for shootings with multiple victims or multiple offenders. 
+    + List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. 
+    + This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. 
+    + This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. 
+    + Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. 
+    + In addition, information related to suspect and victim demographics is also included. 
+    + This data can be used by the public to explore the nature of shooting/criminal activity. 
+    + Please refer to the attached data footnotes for additional information about this dataset.
+
+```{r nypd_data_import, echo=TRUE}
+# Loading the tidyverse library
+library(tidyverse)
+
+nypd_data_shooting <- readr::read_csv("https://data.cityofnewyork.us/api/v3/views/833y-fsy8/export.csv?accessType=DOWNLOAD")
+
+```
+
+
+## Initial Data Summary and Cleaning
++ Doing an initial exploration of the NYPD Data
+    + Loading the *tidyverse* library
+    + Going and initial glimpse of the data
+    + Changing any needed columns from character to date
+    + Changing any needed columns from character to factor
++ Removing some columns not needed like Lon_Lat (since have them individually)
+    + Taking out the X and Y coord_cd columns since don't have general meaning
+    + Also taking out several columns with high missing rates
++ Columns with high missing rates, typically a description of the location of the shooting like inside/outside, street, apartment building
+    + LOC_OF_OCCUR_DESC - removing, less impact to the study and is missing more often than not
+    + LOC_CLASSFCTN_DESC - removing, less impact to the study and is missing more often than not
+    + LOCATION_DESC - removing, less impact to the study and is missing more often than not
++ Leaving in columns that have mixed fills rate but are close to 70%, since the rates are similar. These are:
+    + PERP_AGE_GROUP
+    + PERP_SEX
+    + PERP_RACE
+    + LATITUDE
+    + LONGITUDE
++ Having perpetrator information missing 30% of the time makes sense, since the perpetrator may be unknown for some shootings
+    + The analysis will take special care in any needed controls to combat the missing data for perpetrator and any biases
+   
+```{r nypd_data_wrangling, echo=TRUE}
+# Doing an initial view of the data
+glimpse(nypd_data_shooting)
+
+# Shows several variables that are chr, so changing to factors
+# However, one field is a data, so do that first, is in MM/DD/YYYY format
+nypd_data_shooting$OCCUR_DATE  <- as.Date(nypd_data_shooting$OCCUR_DATE, format = "%m/%d/%Y")
+nypd_data_shooting_adj <- nypd_data_shooting %>% 
+  mutate(across(where(is.character), as.factor))
+
+# Doing another check of the data, should show the needed columns converted
+glimpse(nypd_data_shooting_adj)
+
+# Finding the row count and amount of missing values in each column
+colSums(is.na(nypd_data_shooting_adj))
+colMeans(is.na(nypd_data_shooting_adj)) * 100
+
+# Removing columns that are not needed or have high missing rates
+nypd_data_shooting_adj<- nypd_data_shooting_adj %>%
+    select(-c(LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC, X_COORD_CD, Y_COORD_CD, Lon_Lat))
+
+# Check null rates of remaining columns again
+colMeans(is.na(nypd_data_shooting_adj)) * 100
+```
+
+
+## Analysis of Boro Incidents and Incidents Over Time
++ Will create an *occurrence year* field from the occurrence date of the incident to help with plots
++ **Want to analyze boro dynamics and yearly incident trends in the city and boros.**
++ **I want to get a sense of shooting incident volumes by boro**
+    + Which boro has the most incidents
+    + Which boro has the least incidents
+    + Will express things as a bar chart
++ **I also want to get a sense if certain boros are having incident trends above or below average**
+    + Will plot total city incidents over years as a bar chart
+    + Will plot boro incidents overs years as a scatter plot
++ **Results shows interesting results in Brooklyn**
+    + Brooklyn the most shootings in the overall history across boros
+    + However Brooklyn's shooting incidents have dropped a lot over history which isn't mirror by other boros
+    + Raises the question of why the differing patterns
+
+```{r initial_visuals, echo=TRUE}
+nypd_data_shooting_adj$OCCUR_YEAR <- year(nypd_data_shooting_adj$OCCUR_DATE)
+
+boro_chart_data <- nypd_data_shooting_adj %>%
+  select(BORO) %>%
+  group_by(BORO) %>%
+  summarise(TOTAL_INCIDENTS = n(), .groups = "drop")
+
+# print(boro_chart_data)
+
+barplot(boro_chart_data$TOTAL_INCIDENTS, 
+        names.arg = boro_chart_data$BORO, 
+        col = "maroon4", 
+        main = "NYC Shooting Incidents by Boro", 
+        xlab = "BORO", 
+        ylab = "INCIDENTS")
+
+city_year_chart_data <- nypd_data_shooting_adj %>%
+  select(OCCUR_YEAR) %>%
+  group_by(OCCUR_YEAR) %>%
+  summarise(TOTAL_INCIDENTS = n(), .groups = "drop")
+
+# print(city_year_chart_data)
+
+barplot(city_year_chart_data$TOTAL_INCIDENTS, 
+        names.arg = city_year_chart_data$OCCUR_YEAR, 
+        col = "skyblue", 
+        main = "NYC Shooting Incidents by Year", 
+        xlab = "boro_year_chart_data", 
+        ylab = "INCIDENTS")
+
+boro_year_chart_data <- nypd_data_shooting_adj %>%
+  select(BORO,OCCUR_YEAR) %>%
+  group_by(BORO,OCCUR_YEAR) %>%
+  summarise(TOTAL_INCIDENTS = n(), .groups = "drop")
+
+# print(boro_year_chart_data)
+
+ggplot(data = boro_year_chart_data, aes(x = OCCUR_YEAR, y = TOTAL_INCIDENTS, color = BORO, shape = BORO)) +
+  geom_point(size = 2) +
+    geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "NYC Shooting Incidents by Year per Borough",
+       x = "YEAR",
+       y = "Number of Incidents",
+       color = "BORO",
+       shape = "BORO")
+
+```
+
+
+## Further Population Impact Analysis
++ **Given overall shooting incidents vary much by boro, want to see if population is a driver**
++ Will pull census data and add it to the data frame
+    + Found estimates per decade (2000,2010,2020)
+    + Will tag a year in the data set to the proceeding census figure versus interpolating
++ Will create shooting rates per 100k people by boro
+    + Then will plot a scatter plot similar to prior but with incidents per 100k people
+    + Will keep the same formatting otherwise
++ **Follow up analysis finds shooting incidents in Brooklyn are much lower compared to the Bronx once population size is controlled for. Recent yearly rates in Brooklyn are becoming much more in line with other boros.  The latest year has Brooklyn in line with Manhattan.**
+
+```{r population_analysis, echo=TRUE}
+# Step 1 - read the data in
+boro_pop_raw <- readr::read_csv("https://data.cityofnewyork.us/api/v3/views/xywu-7bv9/export.csv?accessType=DOWNLOAD")
+
+# Step 2 - reshape the data, boro is in rows, decade in columns
+boro_pop_clean <- boro_pop_raw %>%
+  filter(Borough != "NYC Total") %>%
+  select("Borough","2000","2010","2020") %>%
+  pivot_longer(
+    cols = c("2000","2010","2020"),
+    names_to = "DECADE",
+    values_to = "POPULATION"
+  ) %>% 
+  rename(BORO = Borough) %>% 
+  mutate(BORO = toupper(BORO)) %>%
+  mutate(DECADE = as.double(DECADE))
+  
+# print(boro_pop_clean)
+
+# Step 3 - Create a decade to years mapping to cartesean join onto population
+years_df <- data.frame(YEAR = 2006:2024) %>% 
+  mutate(DECADE = floor(YEAR / 10) * 10)
+  
+# print(years_df)
+
+# Step 4 - Left join the population data and the year mapping
+pop_by_year <- years_df %>% 
+  left_join(boro_pop_clean, by = "DECADE") %>% 
+  select("BORO","YEAR","POPULATION") %>%
+  arrange(BORO)
+
+# print(pop_by_year)
+
+# Step 5 - Left join the population data to the aggregated shooting data
+boro_chart_data_with_pop <- boro_year_chart_data %>% 
+  left_join(pop_by_year, by = c("OCCUR_YEAR"="YEAR","BORO"="BORO")) %>% 
+  select("BORO","OCCUR_YEAR","TOTAL_INCIDENTS","POPULATION") %>%
+  mutate(INCIDENTS_PER_100K = round(TOTAL_INCIDENTS/(POPULATION/100000),2)) %>%
+  arrange(BORO)
+
+# print(boro_chart_data_with_pop)
+
+ggplot(data = boro_chart_data_with_pop, aes(x = OCCUR_YEAR, y = INCIDENTS_PER_100K, color = BORO, shape = BORO)) +
+  geom_point(size = 2) +
+    geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "NYC Shooting Incidents by Year per Borough",
+       x = "YEAR",
+       y = "Indicents Per 100K People ",
+       color = "BORO",
+       shape = "BORO")
+```
+
+## Report Conclusion
+  **The overall result of the analysis is that while Brooklyn has the most shooting incidents among the 5 boros over the time period, the shooting incidents per capita are lower than the Bronx. Further, the yearly number of shooting incidents and shooting incidents per capita in Brooklyn are dropping very fast compared to the other boros. The most recent years has Brooklyn in line with Manhattan by shootings per capita.**
+  
++ **Online research for some potential drivers of Brooklyn's shooting incidents decreasing**
+    + Primary search is from:  *https://www.brooklynpaper.com/brooklyn-records-safest-year-da/*
+    + The NYPD dismanted two gangs responsible for numerous shootings
+    + Several financial scams were prosecuted
+    + Numerous community events were hosted by the DA's office such as crime prevention seminars and gun buy backs
+    + Gang-involved youth support and resource programs
+
+## Bias introspecton
+  While I am not a native New Yorker (or Brooklynite) and do not have a prior notion of potential drivers of the shooting rates decreasing in Brooklyn, **I do carry some biases.  I generally get my news from "traditional" sources.** The referenced article relied on info from governmental sources who have a bias themselves to promote their own activities as a major reason for the drop in shootings for political advantage. I generally distrust politicians so I carry that bias.  **I tend to have a bias at looking at economic drivers of potential social change.**
+  
+  **I tried to mitigate my bias** within the analysis by focusing on the numbers that showed Brooklyn's shooting rates going down and avoid trying to prescribe them to a specific cause without doing further research. Further, I tried to label some information from the new article as *potential drivers*.
+
+
+### Showing Session Info
+
+- Showing code too
+
+```{r showinfo, echo=TRUE}
+sessionInfo()
+```
