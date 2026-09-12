@@ -1,0 +1,366 @@
+---
+title: "Module5_COVID19_Project"
+author: "STUDENT XYZ"
+date: "2026-09-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Report Analysis Target
+**Overall, the report wishes to analyze COVID19 data from a global perspective and a US perspective.**
+
+**The first question** of interest is how the US death rate per confirmed case compares to other countries from around the globe. 
+
+**The second question** of interest is the dynamic of death rates per capita and COVID cases per capita across the US. The US data allows the extra analysis since the underlying data contains population information. My theory is the more cases there are per capita, the more overwhelmed the health system will be, causing more deaths per capita.
+
+**The final question** area of interest is are state per capita COVID death rates in 2021 predictive of 2022.
+
+
+## Importing Data
++ The data is from Johns Hopkins Github site.
++ This data set deals with COVID19.
+    + A call is made out to the website to read the csv file of data in
+    + All data sets are imported.
+
++ The data sets include confirmed cases and deaths, as well as US and global information. The data sets are:
+    + COVID19 cases confirmed in the US. 
+    + COVID19 cases confirmed globally. 
+    + COVID19 deaths in the US. 
+    + COVID19 deaths globally.
+    
++ Data commentary overall:
+    + In general the US data has more information and detail.
+    + The US data has FIPS code, the administration/city area, and province/state .
+    + The US death data has population as well.
+    + The global information does not have population. Countries are listed, but only select countries have province/state filled.
+    + Both data sets contain daily observations from 01/22/2020 to 03/09/2023
+
+```{r data_import, echo=TRUE}
+# Loading the tidyverse library
+library(tidyverse)
+
+# Loading MLmetrics to calculate GINI value
+library(MLmetrics)
+
+# Loading the lubridate library
+library(lubridate)
+
+# Load in the data sets
+# Since all five data sets have same beginning url, setting up string concatenation
+
+#Lead url
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+covid19_confirmed_US <- readr::read_csv(str_c(url_in, "time_series_covid19_confirmed_US.csv"))
+
+covid19_confirmed_global <- readr::read_csv(str_c(url_in, "time_series_covid19_confirmed_global.csv"))
+
+covid19_deaths_US <- readr::read_csv(str_c(url_in, "time_series_covid19_deaths_US.csv"))
+
+covid19_deaths_global <- readr::read_csv(str_c(url_in, "time_series_covid19_deaths_global.csv"))
+
+```
+
+
+## Initial Data Summary and Cleaning
++ Doing an initial exploration of the COVID data
+    + Previously loaded the *tidyverse* library
+    + Doing an initial look at the data
+    + The data is in the correct, character/numeric format, so no changes needed there
++ Removing some columns not needed
+    + Taking out Lat and Long (Long_ and Long are used in the different data sets as names)
+    + Taking out other UID, iso2, iso3, code3, FIPS, Admin, and Combined Key columns
++ Columns with high missing rates - the province data - in the global data set is removed
++ The data per date is in column, I want to pivot that information to be in rows
++ Also renaming the province/state fields
++ After pivoting, want to aggregate the data by year
++ Then want to join the US data of cases and deaths together, along with population by state
++ Want to join the global data of cases and deaths together
++ US State/province data has some smaller territories, so will filter out, will keep DC and Puerto Rico though.
+
+```{r covid_data_wrangling, echo=TRUE}
+# Doing an initial view of the data
+print(covid19_confirmed_US[1:10,])
+
+print(covid19_confirmed_global[1:10,])
+
+print(covid19_deaths_US[1:10,])
+
+print(covid19_deaths_global[1:10,])
+
+# Removing unneeded columns and pivoting the data set to have date in rows
+# Taking out small territories
+conf_US_cleaned <- covid19_confirmed_US %>%
+  select(-c(UID, iso2, iso3, code3, FIPS, Admin2, Lat, Long_, Combined_Key)) %>% 
+  rename(State = Province_State, Country = Country_Region) %>%
+  filter(!State %in% c('American Samoa', 'Diamond Princess', 'Grand Princess', 'Guam', 'Northern Mariana Islands', 'Virgin Islands')) %>%
+  group_by(State, Country) %>%
+  summarise(across(everything(), sum, .names = "{.col}"), .groups = "drop") %>%
+  pivot_longer(cols = -c(State, Country), names_to = "date", values_to = "cases") %>%
+  mutate(Year = year(mdy(date))) %>%
+  group_by(State, Country, Year) %>%
+  summarise(tot_cases = sum(cases), .groups = "drop")
+  
+conf_global_cleaned <- covid19_confirmed_global %>% 
+  select(-c(`Province/State`, Lat, Long)) %>% 
+  rename(Country = `Country/Region`) %>%
+  pivot_longer(cols = -c(Country), names_to = "date", values_to = "cases") %>%
+  mutate(Year = year(mdy(date))) %>%
+  select(-date) %>%
+  group_by(Country,Year) %>%
+  summarise(tot_cases = sum(cases)) %>%
+  ungroup()
+
+# Deaths has population in data which intersects Admins area and State, need to handle as well
+# Taking out small territories
+# Will join population data on later
+dths_US_cleaned <- covid19_deaths_US %>%
+  select(-c(UID, iso2, iso3, code3, FIPS, Admin2, Lat, Long_, Combined_Key, Population)) %>% 
+  rename(State = Province_State, Country = Country_Region) %>%
+  filter(!State %in% c('American Samoa', 'Diamond Princess', 'Grand Princess', 'Guam', 'Northern Mariana Islands', 'Virgin Islands')) %>%
+  group_by(State, Country) %>%
+  summarise(across(everything(), sum, .names = "{.col}"), .groups = "drop") %>%
+  pivot_longer(cols = -c(State, Country), names_to = "date", values_to = "deaths") %>%
+  mutate(Year = year(mdy(date))) %>%
+  group_by(State, Country, Year) %>%
+  summarise(tot_deaths = sum(deaths), .groups = "drop")
+
+dths_global_cleaned <- covid19_deaths_global %>% 
+  select(-c(`Province/State`, Lat, Long)) %>% 
+  rename(Country = `Country/Region`) %>%
+  pivot_longer(cols = -c(Country), names_to = "date", values_to = "deaths") %>%
+  mutate(Year = year(mdy(date))) %>%
+  select(-date) %>%
+  group_by(Country,Year) %>%
+  summarise(tot_deaths = sum(deaths)) %>%
+  ungroup()
+
+# To ensure integrity, checking row counts
+# US data
+nrow(conf_US_cleaned)
+nrow(dths_US_cleaned)
+
+# Global data
+nrow(conf_global_cleaned)
+nrow(dths_global_cleaned)
+
+# Getting US state population data
+state_pop_data <- covid19_deaths_US %>% 
+  distinct(Admin2, Province_State, Population) %>%
+  group_by(Province_State) %>%
+  summarise(tot_pop = sum(Population)) %>% 
+  ungroup()
+
+# Joining the data, including population
+US_data <- left_join(conf_US_cleaned, dths_US_cleaned, by = c("State","Country", "Year")) %>%
+  left_join(state_pop_data, by = c("State" = "Province_State"))
+
+global_data <- left_join(conf_global_cleaned, dths_global_cleaned, by = c("Country", "Year"))
+
+# Checking rows again after join
+nrow(US_data)
+nrow(global_data)
+
+# Doing another look at the transformed data
+print(US_data[1:10,])
+
+print(global_data[1:10,])
+
+# To keep memory usage low, removing the larger initial data sets.
+rm(covid19_confirmed_global)
+rm(covid19_confirmed_US)
+rm(covid19_deaths_global)
+rm(covid19_deaths_US)
+
+```
+
+
+## First Area of Analysis - US vs Global Death Per Case Rates
++ Will display results of aggregate US vs global deaths per case rates on in a bar chart for select countries
++ Then will display deaths per case rate of US vs select global countries by year in a scatter plot
+
++ The analysis shows that the US has similar deaths per case rate versus other selected countries. However, Mexico is a major outlier with a high death rate, while Australia had a very low death rate.
+
++ Plotting deaths per case by year shows further interesting results. Mexico has the worst results every year. The United Kingdom in 2020 had very high death rates per COVID case, but then came
+
+```{r global_US_visuals, echo=TRUE}
+# Producing the bar chart data
+US_plot_1_data <- US_data  %>%
+  select(Country, tot_cases, tot_deaths)  %>%
+  group_by(Country) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases)) %>% 
+  ungroup()
+
+global_plot_1_data <- global_data  %>%
+  select(Country, tot_cases, tot_deaths) %>%
+  filter(Country %in% c('Australia','Canada','China','France','Germany','Italy','Mexico','Spain','United Kingdom'))  %>%
+  group_by(Country) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases)) %>% 
+  ungroup()
+
+plot_1_data <- rbind(US_plot_1_data, global_plot_1_data)
+
+# Barplot
+barplot(plot_1_data$deaths_per_case, 
+        names.arg = plot_1_data$Country, 
+        col = "skyblue", 
+        main = "Global Covid Deaths Per Case", 
+        xlab = "Country", 
+        ylab = "Deaths Per Case",
+        cex.names = 0.5)
+
+# Producing the scatter plot data
+US_plot_2_data <- US_data  %>%
+  select(Country, Year, tot_cases, tot_deaths)  %>%
+  group_by(Country, Year) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases)) %>% 
+  ungroup()
+
+global_plot_2_data <- global_data  %>%
+  select(Country, Year, tot_cases, tot_deaths) %>%
+  filter(Country %in% c('Australia','Canada','China','France','Germany','Italy','Mexico','Spain','United Kingdom'))  %>%
+  group_by(Country, Year) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases)) %>% 
+  ungroup()
+
+plot_2_data <- rbind(US_plot_2_data, global_plot_2_data)
+
+# Scatter plot
+ggplot(plot_2_data, aes(x = Year, y = deaths_per_case, color = Country)) +
+  geom_point(size = 3, alpha = 0.8) +
+  theme_minimal() + 
+  labs(
+    title = "Covid Deaths Per Case By Country Over Time",
+    x = "Year",
+    y = "Deaths Per Case",
+    color = "Country"
+  )
+
+```
+
+
+## US Based COVID Analysis
++ Since 2020 and 2023 are partial years, focusing just on 2021 and 2022
++ **The data overall shows the more cases there are per capita, the more deaths there are per capita.** This would support a theory of the health system of a state becomes overwhelmed with an influx of COVID cases, leading to more deaths.
+
+
+```{r US_analysis, echo=TRUE}
+
+# Aggregating to the state level, focusing on 2021 and 2022
+US_plot_3_data <- US_data  %>%
+  filter(Year %in% c(2021,2022)) %>%
+  select(State, tot_pop, tot_cases, tot_deaths) %>%
+  group_by(State) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases),
+            cases_per_capita = sum(tot_cases)/sum(tot_pop),
+            deaths_per_capita = sum(tot_deaths)/sum(tot_pop))%>% 
+  ungroup()
+
+# Scatter plot of cases per capita against deaths per capita
+ggplot(US_plot_3_data, aes(x = cases_per_capita, y = deaths_per_capita)) +
+  geom_point(color = "firebrick", size = 2, alpha = 1) +
+  geom_smooth(method = "lm", color = "gray", linetype = "dashed", se = FALSE) +
+  labs(
+    title = "Covid Cases vs Deaths",
+    x = "Cases per Capita",
+    y = "Deaths per Capita"
+  )
+  
+```
+
+
+
+## US State Covid Death Rate Predictions
++ Since 2020 and 2023 are partial years, focusing just on 2021 and 2022
+
++ The analysis overall shows that state is predictive of COVID death rates. Death rates per capita from COVID seem to persist by state between 2021 and 2022.
+
++ Using GINI and RMSE as evaluation shows the data has some overfitting. The RMSE and GINI on train are essentially 0 and 1 respectively. This shows some shrinkage would be helpful. However, the GINI on the test data (did as the 2022 holdout vs the 2021 test) shows a GINI of ~0.88 which is strong.
+
++ Looking at coefficients also shows State as a variable is predictive. More distant states like AK and HI have very large negative coefficients. Meanwhile several more densely populated states with NYC exposure like NY and NJ have rare positive coefficient estimates.
+
+
+```{r US_modelings, echo=TRUE}
+
+# Aggregating to the state level, focusing on 2021 and 2022
+# Training on 2021 data, testing on 2022 data
+US_plot_4_data <- US_data  %>%
+  filter(Year %in% c(2021,2022)) %>%
+  mutate(train_test = if_else(Year == 2021, "train", "test")) %>% 
+  select(State, train_test, tot_pop, tot_cases, tot_deaths) %>%
+  group_by(State, train_test) %>%
+  summarise(deaths_per_case = sum(tot_deaths)/sum(tot_cases),
+            cases_per_capita = sum(tot_cases)/sum(tot_pop),
+            deaths_per_capita = sum(tot_deaths)/sum(tot_pop))%>% 
+  ungroup()
+
+US_plot_4_data_train <- US_plot_4_data %>%
+  filter(train_test == "train")
+  
+US_plot_4_data_test <- US_plot_4_data %>%
+  filter(train_test == "test")
+
+# Using a poisson model
+model <- glm(deaths_per_capita ~ State, 
+             data = US_plot_4_data_train, 
+             family = poisson(link = "log"))
+
+# Score on test
+US_plot_4_data_test <- US_plot_4_data_test %>% 
+  mutate(pred_death_rate = predict(model, newdata = US_plot_4_data_test, type = "response"))
+
+# Show model coefficients
+summary(model)
+
+# Show rmse test
+test_rmse_val <- sqrt(mean((US_plot_4_data_test$deaths_per_capita - US_plot_4_data_test$pred_death_rate)^2))
+print(test_rmse_val)
+
+# Show train rmse
+US_plot_4_data_train <- US_plot_4_data_train %>% 
+  mutate(pred_death_rate = predict(model, newdata = US_plot_4_data_train, type = "response"))
+
+train_rmse_val <- sqrt(mean((US_plot_4_data_train$deaths_per_capita - US_plot_4_data_train$pred_death_rate)^2))
+print(train_rmse_val)
+
+
+# Gini calc test
+gini_val <- Gini(y_pred = US_plot_4_data_test$pred_death_rate, y_true = US_plot_4_data_test$deaths_per_capita)
+
+print(gini_val)
+
+# Gini on train
+gini_val_train <- Gini(y_pred = US_plot_4_data_train$pred_death_rate, y_true = US_plot_4_data_train$deaths_per_capita)
+
+print(gini_val_train)
+
+```
+
+
+## Report Conclusion
+**The overall analysis showed interesting outcomes from the COVID data analysis, on a global level and within the US.**
+  
+**The first question** of how death rates per cases compared across the global showed Mexico had high death rates among larger countries. Further the UK had high numbers relative to peer in the first year, but then their death rates came down. The US death rates per case seem to be in line with peer countries.
+
+**The second question** of interest was the dynamic of death rates per capita and COVID cases per capita across the US. The data showed as case rates rose across states, death rates typically followed. This showed the potential for deaths to increase as the health system gets overwhelmed.
+
+**The final question** surrounded was State within the US a good predictor of death rates. From the base analysis the answer is yes. Several more remote states had lower rates and several more metropolitan states had higher death rates. This seems to suggest social distancing ability impacts death rates.
+
+
+## Bias introspection
+I am native to the United States and had preconceived notions that state's experienced different COVID death rates. While modeling showed using state as a predictor is strong, the model was overfit. I came to a conclusion this is fine since of the strong GINI metric, but the bias is the conclusion agreed with my apriori.
+  
+**There is also potential general bias within the data.** COVID saw different standards of record keeping with COVID. Different states and different countries sometimes only kept good numbers on deaths vs cases, especially once the pandemic went longer and some people didn't report symptoms. Further, earlier on in the pandemic some people died before rigorous testing occurred. There was also politics in terms of outbreak numbers, causing some political pressure in record keeping.
+
+
+### Showing Session Info
+
+- Showing code too
+
+```{r showinfo, echo=TRUE}
+sessionInfo()
+```
